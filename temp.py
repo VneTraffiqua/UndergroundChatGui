@@ -14,6 +14,12 @@ sending_queue = asyncio.Queue()
 status_updates_queue = asyncio.Queue()
 saved_massages_queue = asyncio.Queue()
 
+async def send_msgs(host, port, queue):
+    while True:
+        msg = await sending_queue.get()
+        print(msg)
+
+
 async def read_history(filepath, queue):
     async with aiofiles.open(filepath, 'r') as file:
         messages = await file.readlines()
@@ -24,7 +30,7 @@ async def save_messages(file_path, queue):
     while True:
         message = await queue.get()
         async with aiofiles.open(file=file_path, mode='a') as file:
-            await file.write(message.strip())
+            await file.write(f'{message.strip()}\n')
 
 async def read_msgs(host, port, queue):
     async with manage_connection(host, port) as (reader, writer):
@@ -32,7 +38,7 @@ async def read_msgs(host, port, queue):
             line = await reader.readline()
             chat_with_time = datetime.datetime.now().strftime('%Y-%m-%d | %H.%M.%S || ') + line.decode("utf-8").rstrip()
             queue.put_nowait(chat_with_time)
-
+            saved_massages_queue.put_nowait(chat_with_time)
 
 async def generate_msgs(queue):
     while True:
@@ -47,15 +53,18 @@ async def main():
 
     connection_host = env.str('HOST')
     connection_port = env.str('CHAT_PORT')
+    writer_port = env.str('WRITER_PORT')
     connection_token = env.str('TOKEN')
     output_file = env.str('FILE_PATH')
 
     await read_history(output_file, messages_queue)
 
     await asyncio.gather(
-        read_msgs(connection_host, connection_port, messages_queue),
+        send_msgs(connection_host, writer_port, sending_queue),
         save_messages(output_file, saved_massages_queue),
+        read_msgs(connection_host, connection_port, messages_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
+
     )
 
 if __name__ == '__main__':
