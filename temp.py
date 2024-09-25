@@ -15,9 +15,13 @@ status_updates_queue = asyncio.Queue()
 saved_massages_queue = asyncio.Queue()
 
 async def send_msgs(host, port, queue):
-    while True:
-        msg = await sending_queue.get()
-        print(msg)
+    async with manage_connection(host, port) as (reader, writer):
+        while True:
+            print(await reader.readline())
+            msg = await sending_queue.get()
+            writer.write(f'{msg}\n'.encode())
+            print(msg)
+
 
 
 async def read_history(filepath, queue):
@@ -64,7 +68,6 @@ async def main():
         save_messages(output_file, saved_massages_queue),
         read_msgs(connection_host, connection_port, messages_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
-
     )
 
 if __name__ == '__main__':
