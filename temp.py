@@ -19,10 +19,8 @@ async def send_msgs(host, port, queue):
         while True:
             print(await reader.readline())
             msg = await sending_queue.get()
-            writer.write(f'{msg}\n'.encode())
-            print(msg)
-
-
+            writer.write(f'{msg}\n\n'.encode())
+            await writer.drain()
 
 async def read_history(filepath, queue):
     async with aiofiles.open(filepath, 'r') as file:
