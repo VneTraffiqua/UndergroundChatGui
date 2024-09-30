@@ -21,14 +21,19 @@ async def is_authentic_token(reader, writer, token):
     await writer.drain()
     for _ in range(2):
         results = await reader.readline()
+    event = gui.NicknameReceived(json.loads(results)['nickname'])
+    status_updates_queue.put_nowait(event)
     return json.loads(results)
 
 async def send_msgs(host, port, queue, token):
     async with manage_connection(host, port) as (reader, writer):
+        status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
         if not await is_authentic_token(reader, writer, token):
             error_queue.put_nowait(['Неверный токен', 'Проверьте токен, сервер его не узнал'])
+            status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
             raise InvalidToken('Invalid token')
         while True:
+            status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
             print(await reader.readline())
             msg = await queue.get()
             writer.write(f'{msg}\n\n'.encode())
@@ -47,8 +52,10 @@ async def save_messages(file_path, queue):
             await file.write(f'{message.strip()}\n')
 
 async def read_msgs(host, port, queue):
+    status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
     async with manage_connection(host, port) as (reader, writer):
         while True:
+            status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
             line = await reader.readline()
             chat_with_time = datetime.datetime.now().strftime('%Y-%m-%d | %H.%M.%S || ') + line.decode("utf-8").rstrip()
             queue.put_nowait(chat_with_time)
