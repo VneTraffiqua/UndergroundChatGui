@@ -10,3 +10,6 @@ async def manage_connection(host, port):
     finally:
         writer.close()
         await writer.wait_closed()
+
+class InvalidToken(Exception):
+    pass

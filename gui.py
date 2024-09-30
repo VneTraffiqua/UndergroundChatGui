@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import messagebox
 import asyncio
 from tkinter.scrolledtext import ScrolledText
 from enum import Enum
@@ -61,6 +62,11 @@ async def update_conversation_history(panel, messages_queue):
         panel.yview(tk.END)
         panel['state'] = 'disabled'
 
+async def send_error(error_queue):
+    while True:
+        title, message = await error_queue.get()
+        messagebox.showinfo(title=title, message=message)
+
 
 async def update_status_panel(status_labels, status_updates_queue):
     nickname_label, read_label, write_label = status_labels
@@ -100,7 +106,7 @@ def create_status_panel(root_frame):
     return (nickname_label, status_read_label, status_write_label)
 
 
-async def draw(messages_queue, sending_queue, status_updates_queue):
+async def draw(messages_queue, sending_queue, status_updates_queue, error_queue):
     root = tk.Tk()
 
     root.title('Чат Майнкрафтера')
@@ -127,6 +133,7 @@ async def draw(messages_queue, sending_queue, status_updates_queue):
     conversation_panel.pack(side="top", fill="both", expand=True)
 
     await asyncio.gather(
+        send_error(error_queue),
         update_tk(root_frame),
         update_conversation_history(conversation_panel, messages_queue),
         update_status_panel(status_labels, status_updates_queue)

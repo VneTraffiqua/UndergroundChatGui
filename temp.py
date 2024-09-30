@@ -2,8 +2,9 @@ import asyncio
 import  aiofiles
 import gui
 import datetime
+import json
 from environs import Env
-from connection_utils import manage_connection
+from connection_utils import manage_connection, InvalidToken
 
 SEC=1
 
@@ -13,12 +14,23 @@ messages_queue = asyncio.Queue()
 sending_queue = asyncio.Queue()
 status_updates_queue = asyncio.Queue()
 saved_massages_queue = asyncio.Queue()
+error_queue = asyncio.Queue()
 
-async def send_msgs(host, port, queue):
+async def is_authentic_token(reader, writer, token):
+    writer.write(f'{token}\n\n'.encode())
+    await writer.drain()
+    for _ in range(2):
+        results = await reader.readline()
+    return not json.loads(results) is None
+
+async def send_msgs(host, port, queue, token):
     async with manage_connection(host, port) as (reader, writer):
+        if not await is_authentic_token(reader, writer, token):
+            error_queue.put_nowait(['Неверный токен', 'Проверьте токен, сервер его не узнал'])
+            raise InvalidToken('Invalid token')
         while True:
             print(await reader.readline())
-            msg = await sending_queue.get()
+            msg = await queue.get()
             writer.write(f'{msg}\n\n'.encode())
             await writer.drain()
 
@@ -62,10 +74,10 @@ async def main():
     await read_history(output_file, messages_queue)
 
     await asyncio.gather(
-        send_msgs(connection_host, writer_port, sending_queue),
+        send_msgs(connection_host, writer_port, sending_queue, connection_token),
         save_messages(output_file, saved_massages_queue),
         read_msgs(connection_host, connection_port, messages_queue),
-        gui.draw(messages_queue, sending_queue, status_updates_queue)
+        gui.draw(messages_queue, sending_queue, status_updates_queue, error_queue)
     )
 
 if __name__ == '__main__':
