@@ -21,7 +21,7 @@ async def is_authentic_token(reader, writer, token):
     await writer.drain()
     for _ in range(2):
         results = await reader.readline()
-    return not json.loads(results) is None
+    return json.loads(results)
 
 async def send_msgs(host, port, queue, token):
     async with manage_connection(host, port) as (reader, writer):
