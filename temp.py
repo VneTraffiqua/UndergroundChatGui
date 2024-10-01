@@ -4,6 +4,7 @@ import gui
 import datetime
 import logging
 import json
+import async_timeout
 from environs import Env
 from connection_utils import manage_connection, InvalidToken
 
@@ -15,6 +16,7 @@ logging.basicConfig(
 )
 
 SEC=1
+SLEEP_SEC=0
 
 loop = asyncio.get_event_loop()
 
@@ -85,9 +87,19 @@ async def generate_msgs(queue):
         await asyncio.sleep(SEC)
 
 async def watch_for_connection(queue):
+    time_out = 0
     while True:
-        msg = await queue.get()
-        logging.info(msg=msg)
+        try:
+            async with async_timeout.timeout(1) as cm:
+                msg = await queue.get()
+                logging.info(msg=msg)
+                await asyncio.sleep(SLEEP_SEC)
+        except asyncio.TimeoutError:
+            time_out +=1
+            print(f'Операция прервана по тайм-ауту. {time_out} сек.')
+        if cm.expired:
+            logging.info(msg='Тайм-аут истек')
+
 
 async def main():
     env = Env()
