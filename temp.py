@@ -2,9 +2,17 @@ import asyncio
 import  aiofiles
 import gui
 import datetime
+import logging
 import json
 from environs import Env
 from connection_utils import manage_connection, InvalidToken
+
+
+logging.basicConfig(
+    format=u'# %(levelname)-4s [%(asctime)s]  %(message)s',
+    level=logging.INFO,
+    filename='watchdog_logger.log'
+)
 
 SEC=1
 
@@ -15,28 +23,36 @@ sending_queue = asyncio.Queue()
 status_updates_queue = asyncio.Queue()
 saved_massages_queue = asyncio.Queue()
 error_queue = asyncio.Queue()
+watchdog_queue = asyncio.Queue()
+
 
 async def is_authentic_token(reader, writer, token):
     writer.write(f'{token}\n\n'.encode())
+    watchdog_queue.put_nowait('Connection is alive. Prompt before auth')
     await writer.drain()
     for _ in range(2):
         results = await reader.readline()
-    event = gui.NicknameReceived(json.loads(results)['nickname'])
-    status_updates_queue.put_nowait(event)
+    if json.loads(results):
+        nickname = gui.NicknameReceived(json.loads(results)['nickname'])
+        status_updates_queue.put_nowait(nickname)
     return json.loads(results)
 
 async def send_msgs(host, port, queue, token):
     async with manage_connection(host, port) as (reader, writer):
         status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
         if not await is_authentic_token(reader, writer, token):
-            error_queue.put_nowait(['Неверный токен', 'Проверьте токен, сервер его не узнал'])
+            error_queue.put_nowait('Invalid token')
+            watchdog_queue.put_nowait('Connection lost. Invalid token')
             status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
             raise InvalidToken('Invalid token')
+        watchdog_queue.put_nowait('Connection is alive. Authorization done')
         while True:
             status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
             print(await reader.readline())
             msg = await queue.get()
-            writer.write(f'{msg}\n\n'.encode())
+            if msg:
+                watchdog_queue.put_nowait('Connection is alive. Message sent')
+                writer.write(f'{msg}\n\n'.encode())
             await writer.drain()
 
 async def read_history(filepath, queue):
@@ -59,6 +75,7 @@ async def read_msgs(host, port, queue):
             line = await reader.readline()
             chat_with_time = datetime.datetime.now().strftime('%Y-%m-%d | %H.%M.%S || ') + line.decode("utf-8").rstrip()
             queue.put_nowait(chat_with_time)
+            watchdog_queue.put_nowait('Connection is alive. New message in chat')
             saved_massages_queue.put_nowait(chat_with_time)
 
 async def generate_msgs(queue):
@@ -67,6 +84,10 @@ async def generate_msgs(queue):
         queue.put_nowait(formatted_date)
         await asyncio.sleep(SEC)
 
+async def watch_for_connection(queue):
+    while True:
+        msg = await queue.get()
+        logging.info(msg=msg)
 
 async def main():
     env = Env()
@@ -84,7 +105,8 @@ async def main():
         send_msgs(connection_host, writer_port, sending_queue, connection_token),
         save_messages(output_file, saved_massages_queue),
         read_msgs(connection_host, connection_port, messages_queue),
-        gui.draw(messages_queue, sending_queue, status_updates_queue, error_queue)
+        gui.draw(messages_queue, sending_queue, status_updates_queue, error_queue),
+        watch_for_connection(watchdog_queue)
     )
 
 if __name__ == '__main__':
