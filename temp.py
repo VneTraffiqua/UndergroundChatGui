@@ -1,22 +1,30 @@
 import asyncio
-import  aiofiles
+import time
+from traceback import print_tb
+
+import aiofiles
 import gui
 import datetime
 import logging
 import json
+import anyio
 import async_timeout
+import socket
 from environs import Env
 from connection_utils import manage_connection, InvalidToken
 
 
 logging.basicConfig(
-    format=u'# %(levelname)-4s [%(asctime)s]  %(message)s',
+    format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-4s [%(asctime)s]  %(message)s',
     level=logging.INFO,
     filename='watchdog_logger.log'
 )
 
 SEC=1
-SLEEP_SEC=0
+SLEEP_SEC=3
+TIMEOUT_SEC=30
+TIMEOUT=7
+CHECK_CONN_TIMEOUT=3
 
 loop = asyncio.get_event_loop()
 
@@ -39,9 +47,24 @@ async def is_authentic_token(reader, writer, token):
         status_updates_queue.put_nowait(nickname)
     return json.loads(results)
 
-async def send_msgs(host, port, queue, token):
+async def ping_pong(host, port):
     async with manage_connection(host, port) as (reader, writer):
-        status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
+        while True:
+            async with async_timeout.timeout(CHECK_CONN_TIMEOUT) as time_out:
+                try:
+                    writer.write('\n\n'.encode())
+                    writer.drain()
+                    await reader.readline()
+                    await asyncio.sleep(1)
+                finally:
+                    if time_out.expired:
+                        status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
+                        status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
+                        raise ConnectionError
+
+async def send_msgs(host, port, queue, token):
+    status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
+    async with manage_connection(host, port) as (reader, writer):
         if not await is_authentic_token(reader, writer, token):
             error_queue.put_nowait('Invalid token')
             watchdog_queue.put_nowait('Connection lost. Invalid token')
@@ -86,19 +109,25 @@ async def generate_msgs(queue):
         queue.put_nowait(formatted_date)
         await asyncio.sleep(SEC)
 
-async def watch_for_connection(queue):
-    time_out = 0
+
+async def handle_connection(host, reader_port, writer_port, token):
     while True:
         try:
-            async with async_timeout.timeout(1) as cm:
-                msg = await queue.get()
-                logging.info(msg=msg)
-                await asyncio.sleep(SLEEP_SEC)
-        except asyncio.TimeoutError:
-            time_out +=1
-            print(f'Операция прервана по тайм-ауту. {time_out} сек.')
-        if cm.expired:
-            logging.info(msg='Тайм-аут истек')
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(ping_pong, host, writer_port)
+                task_group.start_soon(send_msgs, host, writer_port, sending_queue, token)
+                task_group.start_soon(read_msgs, host, reader_port, messages_queue)
+                # task_group.start_soon(watch_for_connection, watchdog_queue)
+        except ConnectionError as e:
+            logging.info(f'{e}...Reconnecting to server')
+            await asyncio.sleep(5)
+        except ExceptionGroup as eg:
+            print(f"Raise any exceptions:")
+            for exc in eg.exceptions:
+                print(f"- {type(exc).__name__}: {exc}")
+            await asyncio.sleep(5)
+        except socket.gaierror as e:
+            logging.info(f'{e}...Reconnecting to server')
 
 
 async def main():
@@ -114,11 +143,14 @@ async def main():
     await read_history(output_file, messages_queue)
 
     await asyncio.gather(
-        send_msgs(connection_host, writer_port, sending_queue, connection_token),
+        handle_connection(
+            host=connection_host,
+            reader_port=connection_port,
+            writer_port=writer_port,
+            token=connection_token
+        ),
         save_messages(output_file, saved_massages_queue),
-        read_msgs(connection_host, connection_port, messages_queue),
-        gui.draw(messages_queue, sending_queue, status_updates_queue, error_queue),
-        watch_for_connection(watchdog_queue)
+        gui.draw(messages_queue, sending_queue, status_updates_queue, error_queue)
     )
 
 if __name__ == '__main__':
