@@ -1,7 +1,4 @@
 import asyncio
-import time
-from traceback import print_tb
-
 import aiofiles
 import gui
 import datetime
@@ -142,16 +139,10 @@ async def main():
 
     await read_history(output_file, messages_queue)
 
-    await asyncio.gather(
-        handle_connection(
-            host=connection_host,
-            reader_port=connection_port,
-            writer_port=writer_port,
-            token=connection_token
-        ),
-        save_messages(output_file, saved_massages_queue),
-        gui.draw(messages_queue, sending_queue, status_updates_queue, error_queue)
-    )
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(handle_connection, connection_host, connection_port, writer_port, connection_token)
+        task_group.start_soon(save_messages, output_file, saved_massages_queue)
+        task_group.start_soon(gui.draw, messages_queue, sending_queue, status_updates_queue, error_queue)
 
 if __name__ == '__main__':
     loop.run_until_complete(main())
