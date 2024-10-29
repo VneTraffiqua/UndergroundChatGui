@@ -53,7 +53,6 @@ def draw(host, port):
     root.mainloop()
 
 
-
 def main():
     env = Env()
     env.read_env()
