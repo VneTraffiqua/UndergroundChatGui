@@ -45,7 +45,7 @@ async def ping_pong(host, port, queues):
             async with async_timeout.timeout(CHECK_CONN_TIMEOUT) as time_out:
                 try:
                     writer.write('\n\n'.encode())
-                    writer.drain()
+                    await writer.drain()
                     await reader.readline()
                     await asyncio.sleep(1)
                 finally:
@@ -159,8 +159,7 @@ async def main():
         raise eg
     except (TkAppClosed, KeyboardInterrupt):
         sys.exit(0)
-    except (TkAppClosed, KeyboardInterrupt):
-        raise SystemExit(0)
+
 
 if __name__ == '__main__':
     try:
